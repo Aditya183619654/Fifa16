@@ -1,0 +1,239 @@
+name: Build Gamebola16 APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+
+      - name: Generate Android project
+        env:
+          APP_URL: https://gamebola16.netlify.app/save
+        run: |
+          mkdir -p app/src/main/java/com/gamebola/wrap app/src/main/res/values app/src/main/res/drawable
+
+          cat > settings.gradle.kts <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "GamebolaWrap"
+          include(":app")
+          EOF
+
+          cat > build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application") version "8.5.2" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+          }
+          EOF
+
+          cat > gradle.properties <<'EOF'
+          android.useAndroidX=true
+          org.gradle.jvmargs=-Xmx2g
+          EOF
+
+          cat > app/build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+
+          android {
+              namespace = "com.gamebola.wrap"
+              compileSdk = 34
+
+              defaultConfig {
+                  applicationId = "com.gamebola.wrap"
+                  minSdk = 24
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+          }
+
+          dependencies {
+              implementation("androidx.core:core-ktx:1.13.1")
+              implementation("androidx.appcompat:appcompat:1.6.1")
+          }
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission
+                  android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+                  android:maxSdkVersion="28" />
+
+              <application
+                  android:allowBackup="false"
+                  android:icon="@drawable/ic_launcher"
+                  android:label="@string/app_name"
+                  android:theme="@style/Theme.AppCompat.Light.NoActionBar">
+                  <activity
+                      android:name=".MainActivity"
+                      android:configChanges="orientation|screenSize|keyboardHidden"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          cat > app/src/main/res/values/strings.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">Gamebola 16</string>
+          </resources>
+          EOF
+
+          cat > app/src/main/res/drawable/ic_launcher.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+              <path android:fillColor="#0B1D12" android:pathData="M0,0h108v108h-108z" />
+              <path android:fillColor="#FFFFFF" android:pathData="M54,54m-40,0a40,40 0 1,1 80,0a40,40 0 1,1 -80,0" />
+              <path android:fillColor="#111111" android:pathData="M54,38l15,11l-6,17l-18,0l-6,-17z" />
+          </vector>
+          EOF
+
+          cat > app/src/main/java/com/gamebola/wrap/MainActivity.kt <<'EOF'
+          package com.gamebola.wrap
+
+          import android.Manifest
+          import android.app.DownloadManager
+          import android.content.pm.PackageManager
+          import android.net.Uri
+          import android.os.Build
+          import android.os.Bundle
+          import android.os.Environment
+          import android.webkit.CookieManager
+          import android.webkit.URLUtil
+          import android.webkit.WebView
+          import android.webkit.WebViewClient
+          import android.widget.Toast
+          import androidx.activity.OnBackPressedCallback
+          import androidx.appcompat.app.AppCompatActivity
+          import androidx.core.app.ActivityCompat
+          import androidx.core.content.ContextCompat
+
+          class MainActivity : AppCompatActivity() {
+              private lateinit var web: WebView
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+
+                  if (Build.VERSION.SDK_INT <= 28 &&
+                      ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                      != PackageManager.PERMISSION_GRANTED
+                  ) {
+                      ActivityCompat.requestPermissions(
+                          this, arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), 1
+                      )
+                  }
+
+                  web = WebView(this)
+                  setContentView(web)
+                  web.settings.javaScriptEnabled = true
+                  web.settings.domStorageEnabled = true
+                  web.webViewClient = WebViewClient()
+
+                  web.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
+                      try {
+                          val request = DownloadManager.Request(Uri.parse(url))
+                          request.setMimeType(mimeType)
+                          request.addRequestHeader("User-Agent", userAgent)
+                          val cookies = CookieManager.getInstance().getCookie(url)
+                          if (cookies != null) request.addRequestHeader("Cookie", cookies)
+                          request.setNotificationVisibility(
+                              DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
+                          )
+                          request.setDestinationInExternalPublicDir(
+                              Environment.DIRECTORY_DOWNLOADS,
+                              URLUtil.guessFileName(url, contentDisposition, mimeType)
+                          )
+                          val dm = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
+                          dm.enqueue(request)
+                          Toast.makeText(this, "Mengunduh...", Toast.LENGTH_SHORT).show()
+                      } catch (e: Exception) {
+                          Toast.makeText(this, "Download gagal", Toast.LENGTH_LONG).show()
+                      }
+                  }
+
+                  onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+                      override fun handleOnBackPressed() {
+                          if (web.canGoBack()) {
+                              web.goBack()
+                          } else {
+                              isEnabled = false
+                              onBackPressedDispatcher.onBackPressed()
+                          }
+                      }
+                  })
+
+                  web.loadUrl("__APP_URL__")
+              }
+          }
+          EOF
+
+          sed -i "s|__APP_URL__|${APP_URL}|" app/src/main/java/com/gamebola/wrap/MainActivity.kt
+
+      - name: Build APK
+        run: gradle assembleDebug --no-daemon
+
+      - name: Rename APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk Gamebola16.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Gamebola16-APK
+          path: Gamebola16.apk
+
+      - name: Publish release (direct APK link)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Gamebola16 build ${{ github.run_number }}
+          files: Gamebola16.apk
