@@ -144,13 +144,18 @@ jobs:
 
           import android.Manifest
           import android.app.DownloadManager
+          import android.content.ContentValues
           import android.content.pm.PackageManager
           import android.net.Uri
           import android.os.Build
           import android.os.Bundle
           import android.os.Environment
+          import android.provider.MediaStore
+          import android.util.Base64
           import android.webkit.CookieManager
+          import android.webkit.JavascriptInterface
           import android.webkit.URLUtil
+          import android.webkit.WebChromeClient
           import android.webkit.WebView
           import android.webkit.WebViewClient
           import android.widget.Toast
@@ -158,6 +163,35 @@ jobs:
           import androidx.appcompat.app.AppCompatActivity
           import androidx.core.app.ActivityCompat
           import androidx.core.content.ContextCompat
+          import java.io.File
+
+          class DownloadBridge(private val activity: AppCompatActivity) {
+              @JavascriptInterface
+              fun save(base64: String, mime: String, name: String) {
+                  try {
+                      val bytes = Base64.decode(base64, Base64.DEFAULT)
+                      if (Build.VERSION.SDK_INT >= 29) {
+                          val values = ContentValues()
+                          values.put(MediaStore.Downloads.DISPLAY_NAME, name)
+                          values.put(MediaStore.Downloads.MIME_TYPE, mime)
+                          values.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                          val uri = activity.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)!!
+                          activity.contentResolver.openOutputStream(uri)!!.use { it.write(bytes) }
+                      } else {
+                          val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                          dir.mkdirs()
+                          File(dir, name).writeBytes(bytes)
+                      }
+                      activity.runOnUiThread {
+                          Toast.makeText(activity, "Tersimpan di folder Download: " + name, Toast.LENGTH_LONG).show()
+                      }
+                  } catch (e: Exception) {
+                      activity.runOnUiThread {
+                          Toast.makeText(activity, "Gagal menyimpan file", Toast.LENGTH_LONG).show()
+                      }
+                  }
+              }
+          }
 
           class MainActivity : AppCompatActivity() {
               private lateinit var web: WebView
@@ -179,26 +213,39 @@ jobs:
                   web.settings.javaScriptEnabled = true
                   web.settings.domStorageEnabled = true
                   web.webViewClient = WebViewClient()
+                  // Needed so JavaScript alert/confirm dialogs from the site actually show up
+                  web.webChromeClient = WebChromeClient()
+                  web.addJavascriptInterface(DownloadBridge(this), "AndroidBridge")
 
                   web.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
-                      try {
-                          val request = DownloadManager.Request(Uri.parse(url))
-                          request.setMimeType(mimeType)
-                          request.addRequestHeader("User-Agent", userAgent)
-                          val cookies = CookieManager.getInstance().getCookie(url)
-                          if (cookies != null) request.addRequestHeader("Cookie", cookies)
-                          request.setNotificationVisibility(
-                              DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
-                          )
-                          request.setDestinationInExternalPublicDir(
-                              Environment.DIRECTORY_DOWNLOADS,
-                              URLUtil.guessFileName(url, contentDisposition, mimeType)
-                          )
-                          val dm = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
-                          dm.enqueue(request)
-                          Toast.makeText(this, "Mengunduh...", Toast.LENGTH_SHORT).show()
-                      } catch (e: Exception) {
-                          Toast.makeText(this, "Download gagal", Toast.LENGTH_LONG).show()
+                      val mt = if (mimeType.isNullOrEmpty()) "application/zip" else mimeType
+                      if (url.startsWith("blob:")) {
+                          val name = "Gamebola-16-SAVE.zip"
+                          val js = "(function(){var x=new XMLHttpRequest();x.open('GET','" + url + "',true);" +
+                              "x.responseType='blob';x.onload=function(){var r=new FileReader();" +
+                              "r.onloadend=function(){AndroidBridge.save(r.result.split(',')[1],'" + mt + "','" + name + "');};" +
+                              "r.readAsDataURL(x.response);};x.send();})();"
+                          web.evaluateJavascript(js, null)
+                      } else {
+                          try {
+                              val request = DownloadManager.Request(Uri.parse(url))
+                              request.setMimeType(mt)
+                              request.addRequestHeader("User-Agent", userAgent)
+                              val cookies = CookieManager.getInstance().getCookie(url)
+                              if (cookies != null) request.addRequestHeader("Cookie", cookies)
+                              request.setNotificationVisibility(
+                                  DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
+                              )
+                              request.setDestinationInExternalPublicDir(
+                                  Environment.DIRECTORY_DOWNLOADS,
+                                  URLUtil.guessFileName(url, contentDisposition, mt)
+                              )
+                              val dm = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
+                              dm.enqueue(request)
+                              Toast.makeText(this, "Mengunduh...", Toast.LENGTH_SHORT).show()
+                          } catch (e: Exception) {
+                              Toast.makeText(this, "Download gagal", Toast.LENGTH_LONG).show()
+                          }
                       }
                   }
 
